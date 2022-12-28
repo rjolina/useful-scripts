@@ -6,6 +6,6 @@ clipboard=$(xsel -b)
 # Generate a QR code from the clipboard contents
 qrencode "$clipboard" -o /tmp/qr.png
 
-# Display the QR code in full screen using imgcat
+# Display the QR code in full screen using sxiv
 sxiv -s f -f /tmp/qr.png
 

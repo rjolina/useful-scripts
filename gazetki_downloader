@@ -1,0 +1,182 @@
+#!/bin/bash
+
+#zmień na katalog w kt. będziesz trzymał skrypt
+#cd ~/skrypciki/gazetki
+
+
+export DISPLAY=:0
+
+[ ! -f gazetki.txt ] && touch gazetki.txt
+
+
+### BIEDRONKA ###
+
+mkdir downloaded_images
+
+# URL strony do pobrania
+url="https://www.biedronka.pl/pl/gazetki"
+
+# Pobranie strony za pomocą curl
+html_content=$(curl -s "$url" \
+  -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0' \
+  -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8' \
+  -H 'Accept-Language: en-US,en;q=0.5' \
+  -H 'Accept-Encoding: gzip, deflate, br' \
+  -H 'DNT: 1' \
+  -H 'Connection: keep-alive' \
+  -H 'Upgrade-Insecure-Requests: 1' \
+  -H 'Sec-Fetch-Dest: document' \
+  -H 'Sec-Fetch-Mode: navigate' \
+  -H 'Sec-Fetch-Site: cross-site' \
+  --compressed)
+
+# Wyszukiwanie linków zawierających słowo 'oszczdn'
+links=$(echo "$html_content" | grep -oP 'href="\K[^"]*oszczdn[^"]*' | sed 's/#.*//' | sort -u)
+
+for link in $links; do
+  if ! grep -q "$link" gazetki.txt; then
+    echo $link >> gazetki.txt
+
+    # Pobieranie strony dla każdego linku
+    page_content=$(curl -s "$link" \
+      -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0' \
+      -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8' \
+      -H 'Accept-Language: en-US,en;q=0.5' \
+      -H 'Accept-Encoding: gzip, deflate, br' \
+      -H 'DNT: 1' \
+      -H 'Connection: keep-alive' \
+      -H 'Upgrade-Insecure-Requests: 1' \
+      -H 'Sec-Fetch-Dest: document' \
+      -H 'Sec-Fetch-Mode: navigate' \
+      -H 'Sec-Fetch-Site: cross-site' \
+      --compressed)
+
+    # Ekstrakcja danych 'asset' i 'serverurl'
+    asset=$(echo "$page_content" | grep -oP '"asset" : "\K[^"]+')
+    serverurl=$(echo "$page_content" | grep -oP '"serverurl" : "\K[^"]+')
+
+    # Generowanie pełnego URL
+    if [[ -n "$asset" && -n "$serverurl" ]]; then
+      full_url="${serverurl}${asset}?req=set,json,UTF-8"
+      # Pobieranie danych JSON
+      json_content=$(curl -s "$full_url")
+      # Ekstrakcja nazw obrazów z JSON-a
+      image_names=$(echo "$json_content" | grep -oP '"n":"\K[^"]+')
+      # Pobieranie obrazów
+      for image_name in $image_names; do
+        image_url="https://s7g10.scene7.com/is/image/$image_name"
+        echo "Downloading image from ${image_url}.jpg"
+        wget -q "${image_url}" -P downloaded_images/
+      done
+      cd downloaded_images/
+      for f in *; do [[ -f "$f" && ! "$f" =~ \. ]] && mv -- "$f" "${f}.jpg"; done
+      
+      filename=$(echo "$link" | cut -d '-' -f 6- | sed s/-/_/g)
+    if [ -z "$filename" ]; then
+      filename="biedronka_$(date +%y_%m_%d)"  # fallback, jeśli nie można wyodrębnić nazwy
+    else
+      filename="biedronka_${filename}_$(date +%y)"
+    fi
+      convert *.jpg "${filename}.pdf"
+      rm *.jpg
+      mv *.pdf ../
+      cd ..
+    else
+      echo "Failed to extract 'asset' or 'serverurl' from $link"
+    fi
+    else echo "te gazetkie biedronki już pobrałem..."
+  fi
+done
+
+rmdir downloaded_images
+
+
+### KAUFLAND ###
+
+
+link2=$(curl -s https://www.kaufland.pl/gazeta-reklamowa.html | grep -oP 'data-download-url="\K[^"]+' | awk '{print $1}' | grep -v Barek | grep -v Zapowiedz | grep tygodnia)
+
+
+
+for link in $link2; do
+  # Check if link already exists in gazetki.txt
+  if grep -q "$link" gazetki.txt; then
+    echo "te gazetkie kauflandu już pobrałem..."
+    continue
+  fi
+
+  
+  
+        filename=$(echo "$link" | cut -d '-' -f 7- | sed 's/-/_/g' | rev | cut -d '_' -f 2- | rev)
+    if [ -z "$filename" ]; then
+      filename="kaufland_$(date +%m_%d_%y)"  # fallback, jeśli nie można wyodrębnić nazwy
+    else
+      filename="kaufland_${filename}"
+  
+  
+  echo "$link" >> gazetki.txt
+  wget -O "${filename}.pdf" "$link"
+
+fi
+done
+
+
+### LIDL ###
+
+# User agent configuration for consistent requests
+USER_AGENT="Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0"
+
+# File to store PDF URLs
+FILE="gazetki.txt"
+
+# Fetch the flyer identifier from Lidl page
+identifier=$(curl -s "https://www.lidl.pl/c/nasze-gazetki/s10008614" \
+  -H "User-Agent: $USER_AGENT" \
+  -H "Accept: */*" \
+  -H "Accept-Language: en-US,en;q=0.5" \
+  -H "Accept-Encoding: gzip, deflate, br" \
+  -H "DNT: 1" \
+  -H "Connection: keep-alive" \
+  -H "Sec-Fetch-Dest: empty" \
+  -H "Sec-Fetch-Mode: cors" \
+  -H "Sec-Fetch-Site: same-origin" | pup 'a[href*="gazetki"] attr{href}' | head -n 2 | grep oferta | sed -E 's|.*/gazetki/(.*)/ar/0|\1|')
+
+# Build the request URL
+flyer_url="https://endpoints.leaflets.schwarz/v4/flyer?flyer_identifier=${identifier}&region_id=0&region_code=0"
+  
+# Fetch the PDF URLs
+pdf_urls=$(curl -s "$flyer_url" --compressed -H "User-Agent: $USER_AGENT" -H "Accept: application/json, text/plain, */*" -H "Accept-Language: en-US,en;q=0.5" -H "Accept-Encoding: gzip, deflate, br" -H "Origin: https://www.lidl.pl" -H "DNT: 1" -H "Connection: keep-alive" -H "Sec-Fetch-Dest: empty" -H "Sec-Fetch-Mode: cors" -H "Sec-Fetch-Site: cross-site" | jq -r '.. | .pdfUrl? | select(.)' | uniq | grep OFERTA | tr ' ' '\n')
+
+# Process each PDF URL
+for pdf_url in $pdf_urls; do
+  if ! grep -qxFe "$pdf_url" "$FILE"; then
+    echo "$pdf_url" >> "$FILE"
+    file_name=$(basename "$pdf_url")
+    # Najpierw dodajemy 'LIDL_' jeśli wymagane, a następnie usuwamy niepotrzebne części nazwy
+    new_file_name=$(echo "$file_name" | sed -e 's/^OFERTA-WAZNA-OD-/lidl_/' -e '/^lidl_/! s/^/lidl_/' -e 's/GAZETKA.*\.pdf$/\.pdf/' -e 's/KATALOG.*\.pdf$/\.pdf/')
+    new_file_name=$(echo "$new_file_name" | sed 's/\(.*\)\.\(.*\)/\124.\2/')
+    echo "pobieram $pdf_url ..."
+    wget "$pdf_url" -O "$new_file_name"
+    sleep 10
+  else
+    echo "te gazetkie lidla już pobrałem..."
+  fi
+done
+
+
+
+
+if [[ ! -d "archiwum_gazetek" ]]; then
+  mkdir archiwum_gazetek
+fi
+
+
+
+
+### PORZĄDKI ###
+
+
+find . -maxdepth 1 -name "*.pdf" -mtime +7 -exec mv {} archiwum_gazetek/ \;
+
+#automatyczne otwieranie w zathurze
+#find . -maxdepth 1 -name '*.pdf' -type f -mmin -10 -exec zathura {} + &
